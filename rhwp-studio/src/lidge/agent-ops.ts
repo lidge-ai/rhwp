@@ -7,6 +7,7 @@ import type { DocumentAgentController } from '../document-agent/controller.ts';
 import { isDocumentAgentError } from '../document-agent/types.ts';
 import { LidgeAgentError, isLidgeAgentError } from './errors.ts';
 import type { AgentInputLock } from './input-lock.ts';
+import { LIDGE_MUTATE_METHODS, replayCall, ReplayCallError } from './api-registry.ts';
 
 type Address = { section: number; para: number; control: number; cell: number };
 export type AgentCell = { table: number; row: number; col: number; resolved: Address };
@@ -36,7 +37,13 @@ type InsertOp = {
   resolved: { section: number; para: number; control: null; cell: null; offset: number; length: 0 };
   beforeSha256: string; args: { section: number; paragraph: number; offset: number; text: string };
 };
-type Op = CellOp | ReplaceOp | CheckboxOp | InsertOp;
+// hwp.api 변경 호출(lib/ops.mjs applyCall). 탭은 같은 메서드를 같은 인자로 부르고 반환값 해시를 비교한다.
+type CallOp = {
+  kind: 'call'; logical: { method: string };
+  resolved: { method: string; args: unknown[] };
+  beforeSha256: string; resultSha256: string; args: { method: string; args: unknown[] };
+};
+type Op = CellOp | ReplaceOp | CheckboxOp | InsertOp | CallOp;
 type Base = { diskSha256: string; documentEpoch: number; changeSeq: number; exportSha256: string };
 type Control = { ctrlId: string; list: number; para: number; controlIndex: number };
 export type AgentBatch = { schemaVersion: 1; commandId: string; token: string; base: Base; ops: Op[] };
@@ -68,8 +75,16 @@ function assertBatch(batch: AgentBatch): void {
   if (batch?.schemaVersion !== 1 || typeof batch.commandId !== 'string' || !batch.commandId || !batch.base
       || !nat(batch.base.documentEpoch) || !nat(batch.base.changeSeq)
       || !HEX64.test(batch.base.exportSha256) || !HEX64.test(batch.base.diskSha256)
-      || !Array.isArray(batch.ops) || batch.ops.length === 0 || batch.ops.length > 256) invalid('INVALID_BATCH');
+      || !Array.isArray(batch.ops) || batch.ops.length === 0 || batch.ops.length > 4096) invalid('INVALID_BATCH');
   for (const op of batch.ops) {
+    if (op?.kind === 'call') {
+      const c = op as CallOp, method = c.args?.method;
+      if (typeof method !== 'string' || !Object.hasOwn(LIDGE_MUTATE_METHODS, method)) invalid('API_METHOD_DENIED');
+      if (!Array.isArray(c.args.args) || c.args.args.length !== LIDGE_MUTATE_METHODS[method]
+          || !HEX64.test(c.resultSha256) || !HEX64.test(c.beforeSha256)
+          || c.args.args.some(a => !(typeof a === 'string' || typeof a === 'boolean' || nat(a)))) invalid('INVALID_CALL_OP');
+      continue;
+    }
     const r = op?.resolved as Record<string, unknown> | undefined;
     if (!r || !HEX64.test(op.beforeSha256) || !nat(r.section) || !nat(r.para)) invalid(`INVALID_OP:${String(op?.kind)}`);
     if (op.kind === 'setCell' || op.kind === 'insertTextInCell') {
@@ -178,6 +193,14 @@ function mutateInsert(wasm: WasmBridge, op: InsertOp): void {
 }
 
 // 셀 안 체크박스는 wp2가 편집에 쓴 주소(cellContext.parentPara, ops.mjs:66-67)를 그대로 쓴다.
+// hwp.api 변경 호출 재생. 빌린 문서 핸들은 이 snapshot 콜백 안에서만 쓰고 세대를 확인한다(wasm-bridge.ts:608-620).
+function mutateCall(deps: AgentOpsDeps, generation: number, op: CallOp): void {
+  const doc = deps.wasm.borrowDocumentHandle() as unknown as Record<string, unknown> | null;
+  if (!doc || deps.wasm.documentGeneration !== generation) fail('DOCUMENT_GENERATION_CHANGED');
+  try { replayCall(doc!, op, hash); }
+  catch (e) { if (e instanceof ReplayCallError) fail(e.code, e.message); throw e; }
+}
+
 function mutateCheckbox(wasm: WasmBridge, op: CheckboxOp): AgentCell | null {
   const a = op.resolved;
   if (a.control === null) {
@@ -216,6 +239,7 @@ export async function applyOps(batch: AgentBatch, deps: AgentOpsDeps): Promise<A
     await deps.input.executeDocumentAgentOperation({
       kind: 'snapshot', operationType: 'lidge-agent-batch',
       operation: (wasm: WasmBridge) => {
+        const generation = deps.wasm.documentGeneration;
         if (!sameBase(deps.controller.getDocumentState(), batch.base)) fail('DOCUMENT_SHA_MISMATCH', '적용 직전 상태가 바뀌었습니다.');
         let deferred = false;
         let lastPosition = deps.input.getCursorPosition();
@@ -223,7 +247,9 @@ export async function applyOps(batch: AgentBatch, deps: AgentOpsDeps): Promise<A
           mustOk(wasm.beginDeferredPagination(), 'DEFERRED_PAGINATION_FAILED');
           deferred = true;
           for (const op of batch.ops) {
-            if (op.kind === 'setCell' || op.kind === 'insertTextInCell') {
+            if (op.kind === 'call') {
+              mutateCall(deps, generation, op);
+            } else if (op.kind === 'setCell' || op.kind === 'insertTextInCell') {
               const a = resolve(wasm, op.logical);
               if (!same(a, op.resolved) || hash(cellText(wasm, a)) !== op.beforeSha256)
                 fail('TARGET_PREIMAGE_MISMATCH', '셀 주소 또는 이전 내용이 다릅니다.');
