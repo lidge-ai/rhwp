@@ -30,7 +30,13 @@ type CheckboxOp = {
     cell: number | null; cellPara: number | null; offset: number; length: 1 };
   beforeSha256: string; args: { occurrence: number };
 };
-type Op = CellOp | ReplaceOp | CheckboxOp;
+type InsertOp = {
+  kind: 'insertText';
+  logical: { section: number; paragraph: number };
+  resolved: { section: number; para: number; control: null; cell: null; offset: number; length: 0 };
+  beforeSha256: string; args: { section: number; paragraph: number; offset: number; text: string };
+};
+type Op = CellOp | ReplaceOp | CheckboxOp | InsertOp;
 type Base = { diskSha256: string; documentEpoch: number; changeSeq: number; exportSha256: string };
 type Control = { ctrlId: string; list: number; para: number; controlIndex: number };
 export type AgentBatch = { schemaVersion: 1; commandId: string; token: string; base: Base; ops: Op[] };
@@ -77,6 +83,10 @@ function assertBatch(batch: AgentBatch): void {
       if (!nat(r!.offset) || r!.length !== 1 || (inCell
           ? !nat(r!.control) || !nat(r!.cell) || !nat(r!.cellPara) || !nat(r!.parentPara)
           : r!.cell !== null || r!.cellPara !== null)) invalid('INVALID_CHECKBOX_OP');
+    } else if (op.kind === 'insertText') {
+      if (r!.control !== null || r!.cell !== null || !nat(r!.offset) || r!.length !== 0
+          || !plain(op.args?.text) || op.args.text === '' || op.args.section !== r!.section
+          || op.args.paragraph !== r!.para || op.args.offset !== r!.offset) invalid('INVALID_INSERT_OP');
     } else invalid('UNKNOWN_OP');
   }
 }
@@ -155,6 +165,18 @@ function mutateReplace(wasm: WasmBridge, op: ReplaceOp): void {
   if (wasm.getTextRange(a.section, a.para, a.offset, Array.from(op.args.replace).length) !== op.args.replace) fail('REPLACE_POSTIMAGE_MISMATCH');
 }
 
+// 본문 문단 끼워 넣기(lib/ops.mjs insertText). 서버가 본 문단 전체 글의 해시가 같을 때만 넣는다.
+function mutateInsert(wasm: WasmBridge, op: InsertOp): void {
+  const a = op.resolved;
+  if (a.section >= wasm.getSectionCount() || a.para >= wasm.getParagraphCount(a.section)) fail('TARGET_NOT_FOUND');
+  const length = wasm.getParagraphLength(a.section, a.para);
+  if (a.offset > length) fail('INVALID_OFFSET');
+  if (hash(wasm.getTextRange(a.section, a.para, 0, length)) !== op.beforeSha256) fail('TARGET_PREIMAGE_MISMATCH', '본문 문단이 다릅니다.');
+  const result = JSON.parse(wasm.insertText(a.section, a.para, a.offset, op.args.text)) as { ok?: boolean };
+  mustOk(result, 'INSERT_FAILED');
+  if (wasm.getTextRange(a.section, a.para, a.offset, Array.from(op.args.text).length) !== op.args.text) fail('INSERT_POSTIMAGE_MISMATCH');
+}
+
 // 셀 안 체크박스는 wp2가 편집에 쓴 주소(cellContext.parentPara, ops.mjs:66-67)를 그대로 쓴다.
 function mutateCheckbox(wasm: WasmBridge, op: CheckboxOp): AgentCell | null {
   const a = op.resolved;
@@ -211,6 +233,10 @@ export async function applyOps(batch: AgentBatch, deps: AgentOpsDeps): Promise<A
             } else if (op.kind === 'replaceText') {
               mutateReplace(wasm, op);
               lastPosition = { sectionIndex: op.resolved.section, paragraphIndex: op.resolved.para, charOffset: op.resolved.offset };
+            } else if (op.kind === 'insertText') {
+              mutateInsert(wasm, op);
+              lastPosition = { sectionIndex: op.resolved.section, paragraphIndex: op.resolved.para,
+                charOffset: op.resolved.offset + Array.from(op.args.text).length };
             } else {
               // CellOp.kind가 두 값 유니온이라 TS가 else에서 CellOp를 좁혀 없애지 못한다. assertBatch가 이미 kind를 검증했다.
               const box = op as CheckboxOp;
