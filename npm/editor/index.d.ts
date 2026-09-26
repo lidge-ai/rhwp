@@ -326,10 +326,16 @@ export declare class RhwpEditor {
   /** agent apply/revert가 commit된 뒤 strict v1 변경 이벤트 구독 */
   onDocumentChanged(listener: (event: RhwpDocumentChangedEventV1) => void): () => void;
   /** lidge-host-v1: 손실 보고가 붙은 export */
-  readonly lidge: { request(method: 'exportWithReport', params: { format: 'hwp' | 'hwpx' }): Promise<{
-    bytes: Uint8Array; format: 'hwp' | 'hwpx';
-    contentLoss: { schemaVersion: 1; outputFormat: 'hwp' | 'hwpx'; count: number; losses: unknown[] };
-  }> };
+  readonly lidge: {
+    request(method: 'exportWithReport', params: { format: 'hwp' | 'hwpx' }): Promise<{
+      bytes: Uint8Array; format: 'hwp' | 'hwpx';
+      contentLoss: { schemaVersion: 1; outputFormat: 'hwp' | 'hwpx'; count: number; losses: unknown[] };
+    }>;
+    request(method: 'lockInput', params: { on: boolean; reason: string; token: string }): Promise<{ locked: boolean }>;
+    request(method: 'applyOps', params: { batch: LidgeAgentBatch }): Promise<LidgeAgentApplyReceipt>;
+    request(method: 'rollbackOps', params: { token: string; commandId: string; beforeDocumentSha256: string }): Promise<{ ok: boolean; code?: string; changeSeq?: number }>;
+    request(method: 'highlightCells', params: { cells: LidgeAgentCell[]; ms: number }): Promise<{ highlighted: number }>;
+  };
   /** lidge-host-v1: Studio Save/Ctrl+S의 호스트 저장 요청 이벤트 구독 */
   onLidgeEvent(listener: (event: { event: 'lidge.hostSaveRequested'; payload: { schemaVersion: 1 } }) => void): () => void;
   /** iframe 엘리먼트를 반환합니다 */
@@ -444,3 +450,10 @@ export declare function createStudio(
   container: string | HTMLElement,
   options?: StudioOptions,
 ): Promise<RhwpEditor>;
+
+export type LidgeAgentCell = { table: number; row: number; col: number; resolved: { section: number; para: number; control: number; cell: number } };
+export type LidgeAgentBatch = { schemaVersion: 1; commandId: string; token: string;
+  base: { diskSha256: string; documentEpoch: number; changeSeq: number; exportSha256: string };
+  ops: Array<Record<string, unknown>> }; // 탭 쪽 agent-ops.ts가 op 모양을 다시 검증한다
+export type LidgeAgentApplyReceipt = { commandId: string; changedCells: LidgeAgentCell[];
+  beforeDocumentSha256: string; afterChangeSeq: number; exportSha256: string };

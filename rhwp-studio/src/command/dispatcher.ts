@@ -57,6 +57,7 @@ export class CommandDispatcher {
     }
 
     const ctx = this.services.getContext();
+    if (ctx.agentInputLocked && commandId !== 'edit:copy') return { ok: false, reason: 'blocked-by-agent' };
     if (isBlockedInFormMode(commandId, ctx)) {
       return { ok: false, reason: 'blocked-in-form-mode' };
     }
@@ -84,6 +85,7 @@ export class CommandDispatcher {
     const def = this.registry.get(commandId);
     if (!def) return false;
     const ctx = this.services.getContext();
+    if (ctx.agentInputLocked && commandId !== 'edit:copy') return false;
     if (isBlockedInFormMode(commandId, ctx)) return false;
     if (!def.canExecute) return true;
     return def.canExecute(ctx);

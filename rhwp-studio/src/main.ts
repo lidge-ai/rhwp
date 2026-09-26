@@ -104,6 +104,10 @@ import { withBusyCursor } from '@/view/busy-cursor';
 import { formatPageIndicator } from '@/view/page-indicator';
 import { installEmbedRuntime } from '@/embed/runtime';
 import { exportWithReport, onLidgeHostEvent } from '@/lidge/host';
+import { applyOps, rollbackOps, type AgentOpsDeps } from '@/lidge/agent-ops';
+import { AgentInputLock } from '@/lidge/input-lock';
+import { AgentHighlight } from '@/lidge/highlight';
+import { LidgeAgentError } from '@/lidge/errors';
 import type { EmbedRendererRuntimeRequestV1 } from '@/embed/rpc-router';
 import { enrichFontDecisionTrace } from '@/core/font-decision-trace';
 import { DocumentAgentController } from '@/document-agent/controller';
@@ -176,6 +180,8 @@ if (import.meta.env.DEV) {
 let canvasView: CanvasView | null = null;
 let inputHandler: InputHandler | null = null;
 let documentAgent: DocumentAgentController | null = null;
+let agentLock: AgentInputLock | null = null;
+let agentHighlight: AgentHighlight | null = null;
 let toolbar: Toolbar | null = null;
 let ruler: Ruler | null = null;
 let rendererSession: RendererSession | null = null;
@@ -254,6 +260,7 @@ function getContext(): EditorContext {
     showParagraphMarks: wasm.getShowParagraphMarks(),
     isDirty: documentState.isDirty(),
     sourceFormat: hasDoc ? (wasm.getSourceFormat() as 'hwp' | 'hwpx' | 'hml') : undefined,
+    agentInputLocked: agentLock?.locked ?? false,
   };
 }
 
@@ -656,6 +663,9 @@ async function initialize(): Promise<void> {
       isDirty: () => documentState.isDirty(),
       render: () => canvasView!.refreshDocumentAgentMutation(),
     });
+    agentLock ??= new AgentInputLock();
+    agentHighlight?.dispose();
+    agentHighlight = new AgentHighlight(container, wasm, canvasView.getVirtualScroll(), canvasView.getViewportManager());
 
     // 눈금자 핀 드래그 커밋 — 종류(문단 서식/쪽 여백)에 따라 InputHandler 호출은 다르지만
     // 진입점은 하나다. 콜백 두 개로 나뉘어 있었을 때 한쪽만 executeOperation 커밋 경로를
@@ -2007,6 +2017,12 @@ void initPromise.then(() => {
   maybeShowSkinOnboarding();
 });
 
+function agentOpsDeps(): AgentOpsDeps {
+  if (!inputHandler || !documentAgent || !agentLock || !canvasView) throw new LidgeAgentError('EDITOR_NOT_READY', 'EDITOR_NOT_READY', true);
+  return { wasm, input: inputHandler, controller: documentAgent, eventBus, lock: agentLock,
+    render: () => canvasView!.refreshDocumentAgentMutation() };
+}
+
 installEmbedRuntime({
   hostWindow: window,
   parentWindow: window.parent,
@@ -2019,6 +2035,7 @@ installEmbedRuntime({
     },
     async loadFile(data, fileName, skipUnsavedGuard, suppressDialogs) {
       await initPromise;
+      if (agentLock?.locked) throw new LidgeAgentError('AGENT_LOCKED', 'AI 편집 중에는 문서를 바꿀 수 없습니다.');
       if (!await canReplaceCurrentDocument(skipUnsavedGuard)) {
         throw new Error('문서 열기가 취소되었습니다.');
       }
@@ -2072,6 +2089,32 @@ installEmbedRuntime({
       await initPromise;
       return exportWithReport(wasm, format);
     },
+    async lidgeLockInput(on, reason, token) {
+      await initPromise;
+      if (!inputHandler || !agentLock) throw new LidgeAgentError('EDITOR_NOT_READY', 'EDITOR_NOT_READY', true);
+      if (!on) {
+        const result = agentLock.lockInput(false, reason, token);
+        inputHandler.setAgentInputLocked(false);
+        return result;
+      }
+      if (agentLock.locked) return agentLock.lockInput(true, reason, token); // 같은 토큰은 멱등, 다른 토큰은 LOCK_HELD
+      if (!inputHandler.setAgentInputLocked(true)) throw new LidgeAgentError('INPUT_BUSY', '한글 조합 중이거나 마우스 버튼이 눌려 있습니다. 끝낸 뒤 다시 실행하세요.', true);
+      try { return agentLock.lockInput(true, reason, token); }
+      catch (error) { inputHandler.setAgentInputLocked(false); throw error; }
+    },
+    async lidgeApplyOps(batch) {
+      await initPromise;
+      return applyOps(batch, agentOpsDeps());
+    },
+    async lidgeRollbackOps(req) {
+      await initPromise;
+      return rollbackOps(agentOpsDeps(), req);
+    },
+    async lidgeHighlightCells(cells, ms) {
+      await initPromise;
+      if (!agentHighlight) throw new LidgeAgentError('EDITOR_NOT_READY');
+      return agentHighlight.highlightCells(cells, ms);
+    },
     async exportHml() {
       await initPromise;
       return wasm.exportHml();
@@ -2100,11 +2143,13 @@ installEmbedRuntime({
     },
     async applyTextCommand(command) {
       await initPromise;
+      if (agentLock?.locked) throw new LidgeAgentError('AGENT_LOCKED', 'AGENT_LOCKED', true);
       if (!documentAgent) throw new Error('Document agent is not initialized');
       return documentAgent.applyTextCommand(command);
     },
     async revertTextCommand(command) {
       await initPromise;
+      if (agentLock?.locked) throw new LidgeAgentError('AGENT_LOCKED', 'AGENT_LOCKED', true);
       if (!documentAgent) throw new Error('Document agent is not initialized');
       return documentAgent.revertTextCommand(command);
     },

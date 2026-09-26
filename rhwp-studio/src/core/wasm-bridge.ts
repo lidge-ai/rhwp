@@ -1849,6 +1849,11 @@ export class WasmBridge {
     }
   }
 
+  getControls(): Array<{ ctrlId: string; list: number; para: number; controlIndex: number }> {
+    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+    return JSON.parse(this.doc.getControls());
+  }
+
   getTableDimensions(sec: number, parentPara: number, controlIdx: number): TableDimensions {
     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
     return JSON.parse(this.doc.getTableDimensions(sec, parentPara, controlIdx));

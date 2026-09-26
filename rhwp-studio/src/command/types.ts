@@ -50,6 +50,8 @@ export interface EditorContext {
   isDirty: boolean;
   /** 원본 파일 형식 — 저장 시 출처 포맷 유지(HWPX→HWPX, HWP→HWP). 다른 포맷 저장은 별도 메뉴(#1613). */
   sourceFormat?: 'hwp' | 'hwpx' | 'hml';
+  /** lidge 에이전트가 입력을 잠갔는가? (선택 필드: 기존 컨텍스트 생성부는 그대로 컴파일된다) */
+  agentInputLocked?: boolean;
 }
 
 /** 개별 커맨드 정의 */
@@ -79,6 +81,8 @@ export interface CommandDef {
 
 /** 커맨드가 실행되지 못한 이유. `dispatch()` 의 `false` 하나를 갈래로 편 것이다. */
 export type CommandFailure =
+  /** lidge 에이전트 편집 중 잠금 */
+  | 'blocked-by-agent'
   /** 레지스트리에 없는 ID */
   | 'unregistered'
   /** `canExecute` 가 현재 컨텍스트에서 거절 */

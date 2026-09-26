@@ -14,11 +14,13 @@ const CAPABILITIES = [
 ];
 const LONG_RUNNING_METHODS = new Set([
   'loadFile', 'getFontDecisionTrace', 'exportHwp', 'exportHwpVerify', 'exportHwpx', 'exportHml',
-  'lidge.exportWithReport',
 ]);
+// 에이전트 탭 적용 경로. 서버 apply deadline(120초)보다 길어야 한다.
+const LIDGE_AGENT_METHODS = new Set(['lidge.exportWithReport', 'lidge.applyOps', 'lidge.rollbackOps']);
 
 export function requestTimeoutFor(method, configuredTimeout) {
   if (configuredTimeout != null) return configuredTimeout;
+  if (LIDGE_AGENT_METHODS.has(method)) return 150000;
   return LONG_RUNNING_METHODS.has(method) ? 60000 : 10000;
 }
 

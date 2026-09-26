@@ -650,6 +650,17 @@ export class InputHandler {
     container.addEventListener('dblclick', this.onDblClickBound);
     container.addEventListener('contextmenu', this.onContextMenuBound);
     container.addEventListener('mousemove', this.onMouseMoveBound);
+    // 드래그 진행 여부 추적: 잠금 판단용. capture라서 내부 핸들러가 stopPropagation해도 받는다.
+    document.addEventListener('mousedown', (e) => { if (e.button === 0) this.lidgePointerDown = true; }, true);
+    document.addEventListener('mouseup', (e) => { if (e.button === 0) this.lidgePointerDown = false; }, true);
+    // window blur로는 풀지 않는다(드래그가 끝났다는 증거가 아니다). 창 밖에서 버튼을 놓았으면
+    // 다음 mousemove가 buttons===0을 보여 줄 때 풀고, 그 전에 fork의 onMouseUp을 한 번 흘려 드래그를 정상 종료시킨다.
+    document.addEventListener('mousemove', (e) => {
+      if (this.lidgePointerDown && (e.buttons & 1) === 0) {
+        this.lidgePointerDown = false;
+        if (!this.agentInputLocked) _mouse.onMouseUp.call(this, e); // 드래그·RAF 정리는 기존 mouseup 경로가 한다
+      }
+    }, true);
     this.textarea.addEventListener('keydown', this.onKeyDownBound);
     this.textarea.addEventListener('input', this.onInputBound);
     this.textarea.addEventListener('compositionstart', this.onCompositionStartBound);
@@ -746,21 +757,25 @@ export class InputHandler {
 
   /** 클릭 이벤트 처리 — hitTest로 커서 배치 */
   private onClick(e: MouseEvent): void {
+    if (this.agentInputLocked) { e.preventDefault(); return; }
     _mouse.onClick.call(this, e);
   }
 
   /** 우클릭 컨텍스트 메뉴 처리 */
   private onContextMenu(e: MouseEvent): void {
+    if (this.agentInputLocked) { e.preventDefault(); return; }
     _mouse.onContextMenu.call(this, e);
   }
 
   /** 더블클릭: 글상자 객체 선택 → 텍스트 편집 진입 */
   private onDblClick(e: MouseEvent): void {
+    if (this.agentInputLocked) { e.preventDefault(); return; }
     _mouse.onDblClick.call(this, e);
   }
 
   /** 마우스 이동: 드래그 선택 또는 표 객체 선택 중 핸들 위 커서 변경 */
   private onMouseMove(e: MouseEvent): void {
+    if (this.agentInputLocked) return; // 잠금 중에는 드래그가 있을 수 없고(아래 규칙), hover 갱신도 멈춘다
     _mouse.onMouseMove.call(this, e);
   }
 
@@ -1425,6 +1440,7 @@ export class InputHandler {
 
   /** 마우스 버튼 놓기: 드래그 선택 종료 */
   private onMouseUp(_e: MouseEvent): void {
+    if (this.agentInputLocked) return;
     _mouse.onMouseUp.call(this, _e);
   }
 
@@ -1928,6 +1944,7 @@ export class InputHandler {
 
   /** 특수 키 처리 (Backspace, Enter, 화살표, Ctrl+Z/Y) */
   private onKeyDown(e: KeyboardEvent): void {
+    if (this.agentInputLocked) { e.preventDefault(); return; }
     _keyboard.onKeyDown.call(this, e);
   }
 
@@ -1962,11 +1979,13 @@ export class InputHandler {
 
   /** 잘라내기 이벤트 처리 */
   private onCut(e: ClipboardEvent): void {
+    if (this.agentInputLocked) { e.preventDefault(); return; }
     _keyboard.onCut.call(this, e);
   }
 
   /** 붙여넣기 이벤트 처리 */
   private onPaste(e: ClipboardEvent): void {
+    if (this.agentInputLocked) { e.preventDefault(); return; }
     _keyboard.onPaste.call(this, e);
   }
 
@@ -3112,7 +3131,27 @@ export class InputHandler {
     alert(error.message);
   }
 
+  // ── lidge 에이전트 입력 잠금 (wp3) ──
+  private agentInputLocked = false;
+  /** 마우스 버튼이 눌려 있으면(드래그가 진행 중일 수 있음) 잠그지 않는다. 생성자의 document mousedown/mouseup capture가 갱신한다. */
+  private lidgePointerDown = false;
+  /** 잠글 때 textarea를 blur해 IME 조합을 먼저 끝낸다. 조합이 남았거나 마우스 버튼이 눌려 있으면 잠그지 않고 false. */
+  setAgentInputLocked(locked: boolean): boolean {
+    if (!locked) { this.agentInputLocked = false; return true; }
+    // 진행 중인 드래그(선 끝점·그림·글상자 배치·셀 선택)는 mousemove 콜백으로 문서를 바꿀 수 있다.
+    // 버튼이 눌린 동안에는 잠그지 않아 스냅샷 전에 드래그가 끝나게 하고, 잠긴 동안에는 mousedown 가드가 새 드래그를 막는다.
+    if (this.lidgePointerDown) return false;
+    this.textarea.blur();
+    if (this.isComposing) return false;
+    this.flushDeferredPaginationIfNeeded('agent-lock', false);
+    this.agentInputLocked = true;
+    return true;
+  }
+  isAgentInputLocked(): boolean { return this.agentInputLocked; }
+
   executeOperation(desc: OperationDescriptor): void {
+    // record는 이미 적용된 편집의 기록이다. 떨어뜨리면 Undo 불가 편집이 남는다(4470-4475와 같은 이유).
+    if (this.agentInputLocked && desc.kind !== 'record') return;
     if (!this.isOperationAllowedInEditMode(desc)) return;
     switch (desc.kind) {
       case 'command': {
@@ -3292,11 +3331,13 @@ export class InputHandler {
 
   /** IME 조합 시작 */
   private onCompositionStart(): void {
+    if (this.agentInputLocked) { this.textarea.value = ''; return; }
     _text.onCompositionStart.call(this);
   }
 
   /** IME 조합 완료 — 조합 텍스트를 Command로 기록 */
   private onCompositionEnd(): void {
+    if (this.agentInputLocked) { this.textarea.value = ''; this.caret.hideComposition(); return; }
     _text.onCompositionEnd.call(this);
   }
 
@@ -3307,6 +3348,7 @@ export class InputHandler {
 
   /** 텍스트 입력 처리 (textarea input 이벤트) */
   private onInput(e?: Event): void {
+    if (this.agentInputLocked) { this.textarea.value = ''; return; }
     _text.onInput.call(this, e as InputEvent);
   }
 
