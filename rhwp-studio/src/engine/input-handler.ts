@@ -651,11 +651,20 @@ export class InputHandler {
     container.addEventListener('contextmenu', this.onContextMenuBound);
     container.addEventListener('mousemove', this.onMouseMoveBound);
     // 드래그 진행 여부 추적: 잠금 판단용. capture라서 내부 핸들러가 stopPropagation해도 받는다.
-    document.addEventListener('mousedown', (e) => { if (e.button === 0) this.lidgePointerDown = true; }, true);
+    document.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      this.lidgePointerDown = true;
+      this.lidgePointerActiveAt = Date.now();
+      this.lidgePointerLast = { x: e.clientX, y: e.clientY };
+    }, true);
     document.addEventListener('mouseup', (e) => { if (e.button === 0) this.lidgePointerDown = false; }, true);
     // window blur로는 풀지 않는다(드래그가 끝났다는 증거가 아니다). 창 밖에서 버튼을 놓았으면
     // 다음 mousemove가 buttons===0을 보여 줄 때 풀고, 그 전에 fork의 onMouseUp을 한 번 흘려 드래그를 정상 종료시킨다.
     document.addEventListener('mousemove', (e) => {
+      if (this.lidgePointerDown && (e.buttons & 1) !== 0) {
+        this.lidgePointerActiveAt = Date.now(); // 끄는 중: 드래그가 살아 있다
+        this.lidgePointerLast = { x: e.clientX, y: e.clientY };
+      }
       if (this.lidgePointerDown && (e.buttons & 1) === 0) {
         this.lidgePointerDown = false;
         if (!this.agentInputLocked) _mouse.onMouseUp.call(this, e); // 드래그·RAF 정리는 기존 mouseup 경로가 한다
@@ -3135,14 +3144,30 @@ export class InputHandler {
   private agentInputLocked = false;
   /** 마우스 버튼이 눌려 있으면(드래그가 진행 중일 수 있음) 잠그지 않는다. 생성자의 document mousedown/mouseup capture가 갱신한다. */
   private lidgePointerDown = false;
-  /** 잠글 때 textarea를 blur해 IME 조합을 먼저 끝낸다. 조합이 남았거나 마우스 버튼이 눌려 있으면 잠그지 않고 false. */
+  private lidgePointerActiveAt = 0;
+  private lidgePointerLast = { x: 0, y: 0 };
+  /** 마지막으로 잠금을 거절한 이유. main.ts가 오류 코드로 쓴다. */
+  agentLockRefusal: 'INPUT_BUSY_POINTER' | 'INPUT_BUSY_IME' | null = null;
+  /**
+   * 잠글 때 textarea를 blur해 IME 조합을 먼저 끝낸다. 자동화 브라우저는 compositionend나 mouseup을
+   * 빠뜨릴 수 있어서, 남은 상태를 스스로 정리한다(실사용 wp5: Aside 에이전트가 INPUT_BUSY로 계속 막힘).
+   * - 조합: blur 뒤에도 조합 중이면 기존 onCompositionEnd로 확정한다(조합 글자는 Undo 기록과 함께 남는다).
+   * - 마우스: 버튼을 누른 뒤 1.5초 동안 끄는 움직임이 없으면 드래그는 끝난 것으로 보고, 기존 mouseup 경로로
+   *   드래그·RAF를 정리한 뒤 잠근다. 1.5초 안이면 끄는 중일 수 있으므로 거절한다(스냅숏 전에 드래그가 끝나야 한다).
+   * 그래도 남으면 false를 돌려주고 이유를 agentLockRefusal에 적는다.
+   */
   setAgentInputLocked(locked: boolean): boolean {
+    this.agentLockRefusal = null;
     if (!locked) { this.agentInputLocked = false; return true; }
-    // 진행 중인 드래그(선 끝점·그림·글상자 배치·셀 선택)는 mousemove 콜백으로 문서를 바꿀 수 있다.
-    // 버튼이 눌린 동안에는 잠그지 않아 스냅샷 전에 드래그가 끝나게 하고, 잠긴 동안에는 mousedown 가드가 새 드래그를 막는다.
-    if (this.lidgePointerDown) return false;
+    if (this.lidgePointerDown && Date.now() - this.lidgePointerActiveAt >= 1500) {
+      this.lidgePointerDown = false;
+      const { x, y } = this.lidgePointerLast;
+      _mouse.onMouseUp.call(this, new MouseEvent('mouseup', { button: 0, buttons: 0, clientX: x, clientY: y }));
+    }
+    if (this.lidgePointerDown) { this.agentLockRefusal = 'INPUT_BUSY_POINTER'; return false; }
     this.textarea.blur();
-    if (this.isComposing) return false;
+    if (this.isComposing) this.onCompositionEnd();
+    if (this.isComposing) { this.agentLockRefusal = 'INPUT_BUSY_IME'; return false; }
     this.flushDeferredPaginationIfNeeded('agent-lock', false);
     this.agentInputLocked = true;
     return true;

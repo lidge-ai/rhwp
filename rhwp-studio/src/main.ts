@@ -2098,7 +2098,12 @@ installEmbedRuntime({
         return result;
       }
       if (agentLock.locked) return agentLock.lockInput(true, reason, token); // 같은 토큰은 멱등, 다른 토큰은 LOCK_HELD
-      if (!inputHandler.setAgentInputLocked(true)) throw new LidgeAgentError('INPUT_BUSY', '한글 조합 중이거나 마우스 버튼이 눌려 있습니다. 끝낸 뒤 다시 실행하세요.', true);
+      if (!inputHandler.setAgentInputLocked(true)) {
+        const pointer = inputHandler.agentLockRefusal === 'INPUT_BUSY_POINTER';
+        throw new LidgeAgentError(pointer ? 'INPUT_BUSY_POINTER' : 'INPUT_BUSY_IME',
+          pointer ? '편집기에서 마우스를 끄는 중입니다. 버튼을 놓은 뒤 다시 실행하세요.'
+            : '편집기에서 한글 조합이 끝나지 않았습니다. 입력을 마친 뒤 다시 실행하세요.', true);
+      }
       try { return agentLock.lockInput(true, reason, token); }
       catch (error) { inputHandler.setAgentInputLocked(false); throw error; }
     },
