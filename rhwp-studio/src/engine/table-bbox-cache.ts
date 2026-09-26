@@ -75,6 +75,38 @@ function failureKey(tableRef: TableRef, pageIdx: number): string {
   return `${tableIdentity(tableRef)}:${pageIdx}`;
 }
 
+/**
+ * [#7442] `hitTest` 가 돌려준 칸 경로가 `ctxPath` 컨텍스트의 **같은 표**를
+ * 가리키는가 — 중첩 표(깊이 ≥2) 전용.
+ *
+ * 경로의 마지막 마디는 칸 좌표라 다를 수 있으므로 `controlIndex`만 비교하고,
+ * 그 위의 마디들은 `(controlIndex, cellIndex, cellParaIndex)`가 모두 같아야
+ * 한다. 깊이 1이나 형제 표 경로를 그대로 셀 (row,col)로 해석하면 엉뚱한 표의
+ * 칸을 가리키므로 이 조건을 통과하지 못하면 호출자가 거부한다.
+ */
+export function isSameNestedTablePath(
+  ctxPath: readonly CellPathStep[] | undefined,
+  hitPath: readonly CellPathStep[] | undefined,
+): boolean {
+  if (!ctxPath || ctxPath.length < 2 || !hitPath) return false;
+  if (ctxPath.length !== hitPath.length) return false;
+  for (let i = 0; i < ctxPath.length - 1; i++) {
+    const a = ctxPath[i];
+    const b = hitPath[i];
+    if (
+      a.controlIndex !== b.controlIndex ||
+      a.cellIndex !== b.cellIndex ||
+      a.cellParaIndex !== b.cellParaIndex
+    ) {
+      return false;
+    }
+  }
+  return (
+    ctxPath[ctxPath.length - 1].controlIndex ===
+    hitPath[hitPath.length - 1].controlIndex
+  );
+}
+
 /** 성공한 bbox 조회를 한 번에 기록하고, 같은 범위의 과거 실패를 해제한다. */
 export function cacheTableCellBboxes<B extends PageScopedBbox>(
   host: TableBboxCacheHost<B>,

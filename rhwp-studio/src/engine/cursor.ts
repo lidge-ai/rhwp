@@ -1772,10 +1772,18 @@ export class CursorState {
     return true;
   }
 
-  /** 지정한 표를 객체 선택한다 (커서 위치와 무관). */
-  enterTableObjectSelectionDirect(sec: number, ppi: number, ci: number): void {
+  /** 지정한 표를 객체 선택한다 (커서 위치와 무관).
+   *
+   *  [#7442] `cellPath`(깊이 ≥2)가 오면 중첩 표를 가리킨다 — 테두리 클릭으로
+   *  안쪽 표를 선택할 때 사용. 깊이 1 이하면 평면 참조와 동일하므로 버린다.
+   */
+  enterTableObjectSelectionDirect(
+    sec: number, ppi: number, ci: number,
+    cellPath?: CellPathEntry[],
+  ): void {
     this._tableObjectSelected = true;
-    this.selectedTableRef = { sec, ppi, ci };
+    this.selectedTableRef =
+      cellPath && cellPath.length > 1 ? { sec, ppi, ci, cellPath } : { sec, ppi, ci };
   }
 
   /** 표 객체 선택을 해제한다. */

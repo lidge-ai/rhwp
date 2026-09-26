@@ -47,6 +47,7 @@ import { computeHangingIndentPx } from './hanging-indent';
 import { isPageLocalTextEditCommand, type PageLocalTextEditOptions } from './input-edit-invalidation';
 import type { NavigationKeyInput } from './navigation-keymap';
 import { isPointNearBoxBorder } from './table-border-hit';
+import { isSameNestedTablePath } from './table-bbox-cache';
 import { DeferredPaginationRunner } from './deferred-pagination-runner';
 import { tableObjectClipboardTarget } from './table-object-clipboard-target';
 import { clearObjectEditingPage } from './object-selection-page';
@@ -1709,6 +1710,35 @@ export class InputHandler {
     try {
       const bbox = this.wasm.getTableBBoxAtPage(sec, ppi, ci, pageIdx);
       return isPointNearBoxBorder(pageX, pageY, bbox);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * [#7442] 클릭 좌표가 중첩 표 외곽 경계선 위인지 판별한다 (페이지 좌표 기준).
+   * `cellPath`(깊이 ≥2)가 가리키는 안쪽 표의 칸 bbox 합집합에 같은 테두리
+   * 임계값을 적용한다 — 평면 `getTableBBoxAtPage` 는 최외곽 표만 돌려줘
+   * 안쪽 표 외곽을 못 잡는다.
+   */
+  private isNestedTableBorderClick(
+    pageIdx: number,
+    pageX: number, pageY: number,
+    sec: number, ppi: number,
+    cellPath: { controlIndex: number; cellIndex: number; cellParaIndex: number }[],
+  ): boolean {
+    try {
+      const bboxes = this.wasm.getTableCellBboxesByPath(sec, ppi, JSON.stringify(cellPath));
+      const cells = bboxes.filter((b: { pageIndex: number }) => b.pageIndex === pageIdx);
+      if (cells.length === 0) return false;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const c of cells) {
+        minX = Math.min(minX, c.x);
+        minY = Math.min(minY, c.y);
+        maxX = Math.max(maxX, c.x + c.w);
+        maxY = Math.max(maxY, c.y + c.h);
+      }
+      return isPointNearBoxBorder(pageX, pageY, { x: minX, y: minY, width: maxX - minX, height: maxY - minY });
     } catch {
       return false;
     }
@@ -3934,8 +3964,11 @@ export class InputHandler {
       // 같은 표인지 확인
       if (hit.parentParaIndex !== ctx.ppi || hit.controlIndex !== ctx.ci) return null;
       if (hit.cellIndex === undefined) return null;
-      if (ctx.cellPath && ctx.cellPath.length > 1 && hit.cellPath) {
-        // 중첩 표: 경로 기반으로 셀 정보 조회
+      if (ctx.cellPath && ctx.cellPath.length > 1) {
+        // [#7442] 중첩 표 컨텍스트: hit 이 정확히 같은 안쪽 표를 가리킬 때만
+        // row/col 을 인정한다. 깊이 1(바깥 칸)이나 형제 표 경로를 그대로 넘기면
+        // 엉뚱한 표의 셀로 드래그/Shift 선택이 붙는다.
+        if (!isSameNestedTablePath(ctx.cellPath, hit.cellPath)) return null;
         const pathJson = JSON.stringify(hit.cellPath);
         const info = this.wasm.getCellInfoByPath(ctx.sec, ctx.ppi, pathJson);
         return { row: info.row, col: info.col };
