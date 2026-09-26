@@ -28,9 +28,10 @@ test('locale-init.js 는 브라우저 언어를 보지 않는다 — resolve.ts 
 
 test('index.html 은 theme-init 바로 뒤에서 locale-init 을 동기 로드한다', () => {
   const html = readFileSync(join(rootDir, 'index.html'), 'utf8');
-  const theme = html.indexOf('<script src="/theme-init.js"></script>');
-  const locale = html.indexOf('<script src="/locale-init.js"></script>');
+  // lidge 포크는 /studio/ 아래에서 서빙하려고 정적 스크립트를 상대 경로(./)로 둔다.
+  const theme = html.indexOf('<script src="./theme-init.js"></script>');
+  const locale = html.indexOf('<script src="./locale-init.js"></script>');
   assert.ok(theme >= 0 && locale > theme, 'locale-init 은 theme-init 뒤, 번들 앞이어야 한다');
-  assert.ok(!/<script[^>]*src="\/locale-init\.js"[^>]*(defer|type="module")/.test(html),
+  assert.ok(!/<script[^>]*src="\.\/locale-init\.js"[^>]*(defer|type="module")/.test(html),
     'defer/module 이면 번들 뒤에 돌아 깜빡임을 못 막는다');
 });
