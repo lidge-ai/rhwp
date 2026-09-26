@@ -43,6 +43,7 @@ pub mod service;
 #[cfg(feature = "subsecond-dev")]
 pub mod subsecond_dev;
 pub mod wasm_api;
+pub mod lidge_wasm; // lidge-hwp 전용 읽기 API (wp5 내용 서명). upstream 병합 시 이 한 줄만 겹친다
 pub mod wmf;
 
 pub use document_core::DocumentCore;
