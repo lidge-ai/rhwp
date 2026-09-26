@@ -10,12 +10,14 @@ import {
 } from './protocol.ts';
 import { routeEmbedRequest, type EmbedRpcHandlers } from './rpc-router.ts';
 import { isDocumentAgentError } from '../document-agent/types.ts';
+import { setLidgeHostConnected, type LidgeEvent, type LidgeExport } from '../lidge/host.ts';
 
 interface EmbedRuntimeOptions {
   hostWindow: Window;
   parentWindow: Window;
   handlers: EmbedRpcHandlers;
   subscribeDocumentChanged?: (listener: (payload: unknown) => void) => () => void;
+  subscribeLidgeEvent?: (listener: (event: LidgeEvent) => void) => () => void;
 }
 
 function errorText(error: unknown): string {
@@ -23,6 +25,13 @@ function errorText(error: unknown): string {
 }
 
 function postPortResponse(port: MessagePort, response: EmbedResponseEnvelope): void {
+  if (response.result && typeof response.result === 'object' && 'bytes' in response.result
+      && (response.result as { bytes?: unknown }).bytes instanceof Uint8Array) {
+    const result = response.result as LidgeExport;
+    const bytes = result.bytes.slice();
+    port.postMessage({ ...response, result: { ...result, bytes } }, [bytes.buffer]);
+    return;
+  }
   if (!(response.result instanceof Uint8Array)) {
     port.postMessage(response);
     return;
@@ -47,6 +56,7 @@ function bindPort(
   clientCapabilities: readonly string[],
   handlers: EmbedRpcHandlers,
   subscribeDocumentChanged?: (listener: (payload: unknown) => void) => () => void,
+  subscribeLidgeEvent?: (listener: (event: LidgeEvent) => void) => () => void,
 ): () => void {
   port.onmessage = async ({ data }) => {
     if (!isRequestAttempt(data, sessionId)) return;
@@ -72,6 +82,7 @@ function bindPort(
       applyTextCommand: 'document-agent-command-v1',
       revertTextCommand: 'document-agent-command-v1',
       focusTarget: 'target-navigation-v1',
+      'lidge.exportWithReport': 'lidge-host-v1',
     }[data.method];
     if (requiredCapability && !clientCapabilities.includes(requiredCapability)) {
       response.error = {
@@ -100,7 +111,7 @@ function bindPort(
     type: 'rhwp-connected', version: EMBED_PROTOCOL_VERSION, sessionId,
     capabilities: EMBED_CAPABILITIES,
   });
-  return subscribeDocumentChanged?.((payload) => {
+  const offDocumentChanged = subscribeDocumentChanged?.((payload) => {
     port.postMessage({
       type: 'rhwp-event',
       version: EMBED_PROTOCOL_VERSION,
@@ -109,6 +120,13 @@ function bindPort(
       payload,
     });
   }) ?? (() => {});
+  const offLidgeEvent = clientCapabilities.includes('lidge-host-v1')
+    ? subscribeLidgeEvent?.((event) => port.postMessage({
+        type: 'rhwp-event', version: EMBED_PROTOCOL_VERSION, sessionId,
+        event: event.event, payload: event.payload,
+      })) ?? (() => {})
+    : () => {};
+  return () => { offDocumentChanged(); offLidgeEvent(); };
 }
 
 function rejectConnect(port: MessagePort, attempt: { version: number; sessionId: string }): void {
@@ -141,7 +159,7 @@ async function handleLegacy(
   const params = isHwpctl ? message : message.params;
   const response: Record<string, unknown> = { type: 'rhwp-response', id: message.id };
   try {
-    if (method === 'applyTextCommand' || method === 'revertTextCommand') {
+    if (method === 'applyTextCommand' || method === 'revertTextCommand' || method.startsWith('lidge.')) {
       throw new Error('Legacy embed transport cannot execute document mutations.');
     }
     const result = await routeEmbedRequest(method, params, handlers, true);
@@ -200,7 +218,9 @@ export function installEmbedRuntime(options: EmbedRuntimeOptions): () => void {
         event.data.capabilities.includes('document-change-events-v1')
           ? options.subscribeDocumentChanged
           : undefined,
+        options.subscribeLidgeEvent,
       );
+      setLidgeHostConnected(event.data.capabilities.includes('lidge-host-v1'));
       binding = { origin: event.origin, sessionId: event.data.sessionId, port, offDocumentChanged };
       return;
     }
@@ -211,6 +231,7 @@ export function installEmbedRuntime(options: EmbedRuntimeOptions): () => void {
   return () => {
     options.hostWindow.removeEventListener('message', onMessage);
     binding?.offDocumentChanged();
+    setLidgeHostConnected(false);
     for (const port of ports) releasePort(port);
     ports.clear();
     binding = null;

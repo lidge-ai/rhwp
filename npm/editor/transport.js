@@ -10,9 +10,11 @@ const CAPABILITIES = [
   'document-agent-command-v1',
   'target-navigation-v1',
   'document-change-events-v1',
+  'lidge-host-v1',
 ];
 const LONG_RUNNING_METHODS = new Set([
   'loadFile', 'getFontDecisionTrace', 'exportHwp', 'exportHwpVerify', 'exportHwpx', 'exportHml',
+  'lidge.exportWithReport',
 ]);
 
 export function requestTimeoutFor(method, configuredTimeout) {
@@ -183,7 +185,9 @@ export class EditorTransport {
       const expectedKeys = ['event', 'payload', 'sessionId', 'type', 'version'];
       if (message.version !== PROTOCOL_VERSION
           || message.sessionId !== this._sessionId
-          || !this._peerCapabilities.has('document-change-events-v1')
+          || !(message.event === 'lidge.hostSaveRequested'
+            ? this._peerCapabilities.has('lidge-host-v1')
+            : this._peerCapabilities.has('document-change-events-v1'))
           || keys.length !== expectedKeys.length
           || keys.some((key, index) => key !== expectedKeys[index])
           || typeof message.event !== 'string') return;

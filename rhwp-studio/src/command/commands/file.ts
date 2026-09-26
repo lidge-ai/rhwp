@@ -1,4 +1,6 @@
 import type { CommandDef, CommandServices } from '../types';
+import { resolveChromeModeRequest } from '@/ui/chrome-mode';
+import { requestLidgeHostSave } from '@/lidge/host';
 import {
   buildHtmlExportFile,
   HTML_EXPORT_DETAILS,
@@ -376,6 +378,9 @@ function reportSaveError(scope: string, error: unknown): void {
 export type SaveCurrentDocumentResult = 'saved' | 'cancelled' | 'failed' | 'unsupported';
 
 export async function saveCurrentDocument(services: CommandServices): Promise<SaveCurrentDocumentResult> {
+  if (resolveChromeModeRequest(window.location.search).mode === 'embed') {
+    return requestLidgeHostSave() ? 'cancelled' : 'unsupported';
+  }
   let password: string | null = null;
   try {
     flushDeferredPaginationBeforeExplicitOutput(services, 'save');

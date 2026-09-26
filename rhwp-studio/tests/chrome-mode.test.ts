@@ -194,11 +194,18 @@ test('embed 저장·인쇄 단축키 판정은 문서 로드 여부와 무관한
   assert.equal(isEmbedSwallowedFileShortcut(ev({ key: 'p', ctrlKey: true, shiftKey: true })), true);
 
   // main 배선: capture 단계 리스너라 다이얼로그 등의 stopPropagation보다 먼저 돈다.
+  // Ctrl/Cmd+S(한글 IME ㄴ 포함, Alt·Shift 제외)는 file:save를 한 번 dispatch하고
+  // 전파를 끊는다 — embed 저장은 lidge 호스트 저장으로 간다. 나머지 파일 단축키는
+  // 기존대로 preventDefault로만 삼킨다.
   const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
   assert.match(
     mainSource,
-    /document\.addEventListener\('keydown', \(e\) => \{\n\s*if \(isEmbedSwallowedFileShortcut\(e\)\) e\.preventDefault\(\);\n\s*\}, true\);/,
+    /if \(chromeMode === 'embed'\) \{[\s\S]*?document\.addEventListener\('keydown', \(e\) => \{\n\s*if \(\(e\.ctrlKey \|\| e\.metaKey\) && !e\.altKey && !e\.shiftKey\n\s*&& \(e\.key\.toLowerCase\(\) === 's' \|\| e\.key === 'ㄴ'\)\) \{\n\s*e\.preventDefault\(\);\n\s*e\.stopImmediatePropagation\(\);\n\s*dispatcher\.dispatch\('file:save'\);\n\s*return;\n\s*\}\n\s*if \(isEmbedSwallowedFileShortcut\(e\)\) e\.preventDefault\(\);\n\s*\}, true\);/,
   );
+  // dispatch 대상이 embed에서 등록돼 있어야 한다(미등록 dispatch는 무해한 no-op이다).
+  // Save As는 저장 대상 경로를 바꿀 수 있으므로 계속 숨긴다.
+  assert.equal(EMBED_HIDDEN_FILE_COMMAND_IDS.includes('file:save'), false);
+  assert.equal(EMBED_HIDDEN_FILE_COMMAND_IDS.includes('file:save-as'), true);
 });
 
 test('embed의 unsaved guard는 로컬 저장 선택지를 막고 자동 discard는 하지 않는다', () => {

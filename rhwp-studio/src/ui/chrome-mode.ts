@@ -25,13 +25,14 @@ export interface ChromeModeRequest {
  * 만들고(다운로드 폴더로 떨어질 뿐 호스트 저장소에는 반영되지 않는다), 열기/새
  * 문서는 호스트가 감지할 수 없는 문서 교체 경로를 연다. `file:page-setup`과
  * `file:about`은 수명주기가 아니라 편집·정보 표면이므로 유지한다.
+ * `file:save`는 예외로 등록한다: embed 저장은 로컬 다운로드가 아니라 lidge 호스트
+ * 저장(`lidge.hostSaveRequested`)으로 보낸다.
  */
 export const EMBED_HIDDEN_FILE_COMMAND_IDS: readonly string[] = [
   'file:new-doc',
   'file:open',
   'file:open-recent',
   'file:clear-recent',
-  'file:save',
   'file:save-as',
   'file:save-as-hwp',
   'file:save-as-hwpx',

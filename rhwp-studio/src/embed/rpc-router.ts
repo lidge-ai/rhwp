@@ -1,5 +1,6 @@
 import type { HmlSaveState } from '../core/hml-save-capability.ts';
 import type { EmbedFontDecisionTraceV1 } from '../core/font-decision-trace.ts';
+import type { ContentLossReport } from '../core/export-content-loss.ts';
 import {
   assertEmptyParams,
   assertOnlyParam,
@@ -42,6 +43,9 @@ export interface EmbedRpcHandlers {
   getPageSvg(page: number): Promise<string>;
   exportHwp(): Promise<Uint8Array>;
   exportHwpx(): Promise<Uint8Array>;
+  lidgeExportWithReport(format: 'hwp' | 'hwpx'): Promise<{
+    bytes: Uint8Array; format: 'hwp' | 'hwpx'; contentLoss: ContentLossReport;
+  }>;
   exportHml(): Promise<Uint8Array>;
   getHmlSaveState(): Promise<HmlSaveState>;
   exportHwpVerify(): Promise<unknown>;
@@ -162,6 +166,11 @@ export async function routeEmbedRequest(
     );
     case 'exportHwp': return handlers.exportHwp();
     case 'exportHwpx': return handlers.exportHwpx();
+    case 'lidge.exportWithReport': {
+      assertOnlyKeys(params, ['format'], 'lidge.exportWithReport params');
+      if (params.format !== 'hwp' && params.format !== 'hwpx') throw new Error('format must be hwp or hwpx');
+      return handlers.lidgeExportWithReport(params.format);
+    }
     case 'exportHml': return handlers.exportHml();
     case 'getHmlSaveState': return handlers.getHmlSaveState();
     case 'exportHwpVerify': return handlers.exportHwpVerify();

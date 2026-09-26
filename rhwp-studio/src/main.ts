@@ -100,6 +100,7 @@ import { CENTER_ZOOM_ANCHOR } from '@/view/zoom-anchor';
 import { withBusyCursor } from '@/view/busy-cursor';
 import { formatPageIndicator } from '@/view/page-indicator';
 import { installEmbedRuntime } from '@/embed/runtime';
+import { exportWithReport, onLidgeHostEvent } from '@/lidge/host';
 import type { EmbedRendererRuntimeRequestV1 } from '@/embed/rpc-router';
 import { enrichFontDecisionTrace } from '@/core/font-decision-trace';
 import { DocumentAgentController } from '@/document-agent/controller';
@@ -315,7 +316,8 @@ const plugins = new PluginHostRegistry({
 });
 (window as any).rhwpStudio.plugins = plugins;
 
-// 모든 내장 커맨드 등록. embed 프로파일에서는 문서 수명주기 커맨드를 등록하지 않는다 —
+// 모든 내장 커맨드 등록. embed 프로파일에서는 문서 수명주기 커맨드를 등록하지 않는다
+// (단 file:save는 등록한다 — embed 저장은 lidge 호스트 저장으로 보낸다) —
 // registerAll이 메뉴 클릭·단축키·전역 단축키·커맨드 팔레트가 모두 지나는 choke point라
 // 이 필터 하나로 충분하다. 파일 수명주기 커맨드에 더해 edit:compare-documents도 거른다:
 // 비교 실행이 오른쪽 문서를 현재 에디터에 로드하는, 호스트가 감지할 수 없는 문서 교체
@@ -373,7 +375,16 @@ if (chromeMode === 'embed') {
   // 모듈 최상위 등록이라 WASM 로딩 중에도 새지 않고, capture 단계라 다이얼로그
   // 등의 stopPropagation보다 먼저 돌며, preventDefault만 한다 — 대상 커맨드는
   // embed에서 미등록이고, InputHandler 활성 시의 중복 preventDefault는 무해하다.
+  // Ctrl+S는 예외: embed 저장은 lidge 호스트 저장으로 보내므로 여기서 file:save를
+  // 한 번만 dispatch하고 이후 전파를 막는다.
   document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
+        && (e.key.toLowerCase() === 's' || e.key === 'ㄴ')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      dispatcher.dispatch('file:save');
+      return;
+    }
     if (isEmbedSwallowedFileShortcut(e)) e.preventDefault();
   }, true);
 }
@@ -1942,6 +1953,7 @@ installEmbedRuntime({
   hostWindow: window,
   parentWindow: window.parent,
   subscribeDocumentChanged: (listener) => eventBus.on('document-agent-changed', listener),
+  subscribeLidgeEvent: onLidgeHostEvent,
   handlers: {
     async ready() {
       await initPromise;
@@ -1997,6 +2009,10 @@ installEmbedRuntime({
     async exportHwpx() {
       await initPromise;
       return wasm.exportHwpx();
+    },
+    async lidgeExportWithReport(format) {
+      await initPromise;
+      return exportWithReport(wasm, format);
     },
     async exportHml() {
       await initPromise;
