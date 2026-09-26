@@ -120,11 +120,11 @@ export default defineConfig({
         theme_color: '#2b6cb0',
         background_color: '#ffffff',
         display: 'standalone',
-        start_url: '/rhwp/',
-        scope: '/rhwp/',
+        start_url: process.env.LIDGE_STUDIO_BASE ?? '/rhwp/',
+        scope: process.env.LIDGE_STUDIO_BASE ?? '/rhwp/',
         file_handlers: [
           {
-            action: '/rhwp/',
+            action: process.env.LIDGE_STUDIO_BASE ?? '/rhwp/',
             accept: {
               'application/x-hwp': ['.hwp'],
               'application/hwp+zip': ['.hwpx'],

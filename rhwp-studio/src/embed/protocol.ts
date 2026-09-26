@@ -16,6 +16,7 @@ export const EMBED_CAPABILITIES = [
   'document-agent-command-v1',
   'target-navigation-v1',
   'document-change-events-v1',
+  'lidge-host-v1',
 ] as const;
 
 export interface EmbedConnectAttempt {

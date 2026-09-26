@@ -325,6 +325,13 @@ export declare class RhwpEditor {
   focusTarget(target: RhwpBodyParagraphTargetV1): Promise<{ focused: boolean; page: number }>;
   /** agent apply/revert가 commit된 뒤 strict v1 변경 이벤트 구독 */
   onDocumentChanged(listener: (event: RhwpDocumentChangedEventV1) => void): () => void;
+  /** lidge-host-v1: 손실 보고가 붙은 export */
+  readonly lidge: { request(method: 'exportWithReport', params: { format: 'hwp' | 'hwpx' }): Promise<{
+    bytes: Uint8Array; format: 'hwp' | 'hwpx';
+    contentLoss: { schemaVersion: 1; outputFormat: 'hwp' | 'hwpx'; count: number; losses: unknown[] };
+  }> };
+  /** lidge-host-v1: Studio Save/Ctrl+S의 호스트 저장 요청 이벤트 구독 */
+  onLidgeEvent(listener: (event: { event: 'lidge.hostSaveRequested'; payload: { schemaVersion: 1 } }) => void): () => void;
   /** iframe 엘리먼트를 반환합니다 */
   readonly element: HTMLIFrameElement;
   // ── 브리지 표면 ────────────────────────────────────────────────

@@ -378,6 +378,31 @@ export class RhwpEditor {
     return this._iframe;
   }
 
+  /** lidge 호스트 capability(lidge-host-v1) 표면. */
+  get lidge() {
+    return {
+      request: (method, params = {}) => {
+        if (!this._transport.supports('lidge-host-v1')) throw new Error('lidge-host-v1 unavailable');
+        if (method !== 'exportWithReport') throw new Error(`Unknown lidge method: ${method}`);
+        return this._request(`lidge.${method}`, params).then((result) => {
+          if (!(result?.bytes instanceof Uint8Array)
+              || !['hwp', 'hwpx'].includes(result.format)
+              || result.contentLoss?.schemaVersion !== 1) throw new Error('Invalid lidge export');
+          return result;
+        });
+      },
+    };
+  }
+
+  /** Studio Save/Ctrl+S의 lidge.hostSaveRequested 이벤트를 구독합니다. */
+  onLidgeEvent(listener) {
+    if (!this._transport.supports('lidge-host-v1')) throw new Error('lidge-host-v1 unavailable');
+    if (typeof listener !== 'function') throw new TypeError('listener must be a function');
+    return this._transport.on('lidge.hostSaveRequested', (payload) => {
+      if (payload?.schemaVersion === 1) listener({ event: 'lidge.hostSaveRequested', payload });
+    });
+  }
+
   // ── 브리지 표면 (studio 자동화·플러그인·창 제어) ─────────────────
 
   /**
