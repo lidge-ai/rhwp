@@ -1,6 +1,7 @@
 import type { HmlSaveState } from '../core/hml-save-capability.ts';
 import type { EmbedFontDecisionTraceV1 } from '../core/font-decision-trace.ts';
 import type { ContentLossReport } from '../core/export-content-loss.ts';
+import type { AgentApplyReceipt, AgentBatch, AgentCell, AgentRollbackResult } from '../lidge/agent-ops.ts';
 import {
   assertEmptyParams,
   assertOnlyParam,
@@ -46,6 +47,10 @@ export interface EmbedRpcHandlers {
   lidgeExportWithReport(format: 'hwp' | 'hwpx'): Promise<{
     bytes: Uint8Array; format: 'hwp' | 'hwpx'; contentLoss: ContentLossReport;
   }>;
+  lidgeLockInput(on: boolean, reason: string, token: string): Promise<{ locked: boolean }>;
+  lidgeApplyOps(batch: AgentBatch): Promise<AgentApplyReceipt>;
+  lidgeRollbackOps(req: { token: string; commandId: string; beforeDocumentSha256: string }): Promise<AgentRollbackResult>;
+  lidgeHighlightCells(cells: AgentCell[], ms: number): Promise<{ highlighted: number }>;
   exportHml(): Promise<Uint8Array>;
   getHmlSaveState(): Promise<HmlSaveState>;
   exportHwpVerify(): Promise<unknown>;
@@ -170,6 +175,26 @@ export async function routeEmbedRequest(
       assertOnlyKeys(params, ['format'], 'lidge.exportWithReport params');
       if (params.format !== 'hwp' && params.format !== 'hwpx') throw new Error('format must be hwp or hwpx');
       return handlers.lidgeExportWithReport(params.format);
+    }
+    case 'lidge.lockInput': {
+      assertOnlyKeys(params, ['on', 'reason', 'token'], 'lidge.lockInput params');
+      if (typeof params.on !== 'boolean' || typeof params.reason !== 'string'
+          || typeof params.token !== 'string' || !params.token) throw new Error('lockInput params invalid');
+      return handlers.lidgeLockInput(params.on, params.reason, params.token);
+    }
+    case 'lidge.applyOps':
+      assertOnlyKeys(params, ['batch'], 'lidge.applyOps params');
+      return handlers.lidgeApplyOps(params.batch as AgentBatch); // op 모양은 agent-ops.ts assertBatch가 다시 검증
+    case 'lidge.rollbackOps': {
+      assertOnlyKeys(params, ['token', 'commandId', 'beforeDocumentSha256'], 'lidge.rollbackOps params');
+      const { token, commandId, beforeDocumentSha256 } = params;
+      if (![token, commandId, beforeDocumentSha256].every(v => typeof v === 'string' && v.length > 0)) throw new Error('rollbackOps params invalid');
+      return handlers.lidgeRollbackOps({ token: token as string, commandId: commandId as string, beforeDocumentSha256: beforeDocumentSha256 as string });
+    }
+    case 'lidge.highlightCells': {
+      assertOnlyKeys(params, ['cells', 'ms'], 'lidge.highlightCells params');
+      if (!Array.isArray(params.cells) || !Number.isSafeInteger(params.ms)) throw new Error('highlightCells params invalid');
+      return handlers.lidgeHighlightCells(params.cells as AgentCell[], params.ms as number);
     }
     case 'exportHml': return handlers.exportHml();
     case 'getHmlSaveState': return handlers.getHmlSaveState();

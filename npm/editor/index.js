@@ -380,11 +380,13 @@ export class RhwpEditor {
 
   /** lidge 호스트 capability(lidge-host-v1) 표면. */
   get lidge() {
+    const methods = ['exportWithReport', 'lockInput', 'applyOps', 'rollbackOps', 'highlightCells'];
     return {
       request: (method, params = {}) => {
         if (!this._transport.supports('lidge-host-v1')) throw new Error('lidge-host-v1 unavailable');
-        if (method !== 'exportWithReport') throw new Error(`Unknown lidge method: ${method}`);
+        if (!methods.includes(method)) throw new Error(`Unknown lidge method: ${method}`);
         return this._request(`lidge.${method}`, params).then((result) => {
+          if (method !== 'exportWithReport') return result;
           if (!(result?.bytes instanceof Uint8Array)
               || !['hwp', 'hwpx'].includes(result.format)
               || result.contentLoss?.schemaVersion !== 1) throw new Error('Invalid lidge export');

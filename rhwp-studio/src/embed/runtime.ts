@@ -10,6 +10,7 @@ import {
 } from './protocol.ts';
 import { routeEmbedRequest, type EmbedRpcHandlers } from './rpc-router.ts';
 import { isDocumentAgentError } from '../document-agent/types.ts';
+import { isLidgeAgentError } from '../lidge/errors.ts';
 import { setLidgeHostConnected, type LidgeEvent, type LidgeExport } from '../lidge/host.ts';
 
 interface EmbedRuntimeOptions {
@@ -83,6 +84,10 @@ function bindPort(
       revertTextCommand: 'document-agent-command-v1',
       focusTarget: 'target-navigation-v1',
       'lidge.exportWithReport': 'lidge-host-v1',
+      'lidge.lockInput': 'lidge-host-v1',
+      'lidge.applyOps': 'lidge-host-v1',
+      'lidge.rollbackOps': 'lidge-host-v1',
+      'lidge.highlightCells': 'lidge-host-v1',
     }[data.method];
     if (requiredCapability && !clientCapabilities.includes(requiredCapability)) {
       response.error = {
@@ -95,12 +100,12 @@ function bindPort(
     try {
       response.result = await routeEmbedRequest(data.method, data.params, handlers);
     } catch (error) {
-      const documentAgentError = isDocumentAgentError(error) ? error : null;
+      const coded = isDocumentAgentError(error) ? error : isLidgeAgentError(error) ? error : null;
       response.error = {
-        code: documentAgentError?.code ?? 'RPC_ERROR',
+        code: coded?.code ?? 'RPC_ERROR',
         message: errorText(error),
-        ...(typeof documentAgentError?.recovered === 'boolean'
-          ? { recovered: documentAgentError.recovered }
+        ...(typeof coded?.recovered === 'boolean'
+          ? { recovered: coded.recovered }
           : {}),
       };
     }
